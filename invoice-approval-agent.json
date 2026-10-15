@@ -1,0 +1,861 @@
+{
+  "name": "Invoice Approval Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "invoice-intake",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        400
+      ],
+      "id": "6b0c9178-82d7-4b53-ba69-599d25bb7291",
+      "name": "Webhook",
+      "webhookId": "REGENERATE_ON_IMPORT"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "60a895db-8244-47dd-9764-50b78971b726",
+              "leftValue": "={{ $json.body.vendor }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "6698092e-2b7f-4c0c-8e1a-f461ebf64400",
+              "leftValue": "={{ $json.body.invoice_number }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "f4aab685-b10d-4636-9993-dfa51b8e2b97",
+              "leftValue": "={{ $json.body.amount }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            },
+            {
+              "id": "2f6ec7b8-6a16-4a76-8f8b-1d06bb7afcaf",
+              "leftValue": "={{ $json.body.due_date }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "f490b899-b8e7-455a-8236-fb5e9cb7ca12",
+              "leftValue": "={{ $json.body.po_number }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        224,
+        400
+      ],
+      "id": "20649325-9321-4df3-aef4-f905acfb148d",
+      "name": "Valid Invoice?"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{ \"error\": \"vendor, invoice_number, amount, due_date and po_number are required\" }",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        512,
+        528
+      ],
+      "id": "06019839-ebc5-4f11-b163-d11e46c92083",
+      "name": "Respond Invalid"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{ \"status\": \"received\" }",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        512,
+        336
+      ],
+      "id": "9dac9658-f5a4-42c8-a791-c58870fa0aa0",
+      "name": "Respond Accepted"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Vendor: {{ $json.body.vendor }}\nInvoice: {{ $json.body.invoice_number }}\nAmount: {{ $json.body.amount }} {{ $json.body.currency }}\nPO: {{ $json.body.po_number }}\nDescription: {{ $json.body.description }}",
+        "options": {
+          "systemMessage": "You are an invoice policy checker for a company in Lahore.\nYou receive an invoice. Decide if it can be auto-approved or needs human approval.\n\nRules:\n1. Auto-approve only if amount is 50000 or less AND currency is PKR AND po_number is present.\n2. Otherwise, the decision is needs_human.\n3. Use only the invoice data given. Do not invent limits, vendors, or PO details.\n\nReturn ONLY valid JSON, with no extra text or markdown:\n{\n  \"decision\": \"auto_approve\" or \"needs_human\",\n  \"reason\": \"one short sentence explaining the decision\"\n}"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        448,
+        -64
+      ],
+      "id": "a84373e8-846e-4e3d-b0e0-61f54c92c3fc",
+      "name": "Policy Agent",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        520,
+        168
+      ],
+      "id": "6908878f-5b91-41f5-812c-0c17a0a1630f",
+      "name": "Policy Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "YOUR_OPENAI_CREDENTIAL_ID",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.output || '';\n\nlet data;\ntry {\n  data = JSON.parse(raw.replace(/```json|```/g, '').trim());\n} catch (err) {\n  data = {\n    decision: 'needs_human',\n    reason: 'Policy output could not be parsed. Send to human review.'\n  };\n}\n\nreturn [{\n  json: {\n    decision: data.decision === 'auto_approve' ? 'auto_approve' : 'needs_human',\n    reason: data.reason || 'no reason given'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        48
+      ],
+      "id": "db08e980-a3f2-4d0a-8486-54e5cc8c8260",
+      "name": "Parse Policy"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "564136e9-c82b-410f-9991-379afef6b63b",
+              "leftValue": "={{ $json.decision }}",
+              "rightValue": "auto_approve",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1024,
+        48
+      ],
+      "id": "4c695ba2-09d5-4f0c-90c5-685644837c91",
+      "name": "Auto Approve?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "43030460-4ce3-486b-acb8-db9dbf3681f6",
+              "leftValue": "={{ $json.data.approved }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1472,
+        336
+      ],
+      "id": "b71141d7-5df3-46e3-be2f-62162d604bf6",
+      "name": "Human Approved?"
+    },
+    {
+      "parameters": {
+        "operation": "sendAndWait",
+        "sendTo": "OWNER_EMAIL",
+        "subject": "=Approve invoice {{ $('Webhook').first().json.body.invoice_number }} from {{ $('Webhook').first().json.body.vendor }}?",
+        "message": "=Vendor: {{ $('Webhook').first().json.body.vendor }}\nInvoice: {{ $('Webhook').first().json.body.invoice_number }}\nAmount: {{ $('Webhook').first().json.body.amount }} {{ $('Webhook').first().json.body.currency }}\nPO: {{ $('Webhook').first().json.body.po_number }}\nDescription: {{ $('Webhook').first().json.body.description }}\n\nPolicy note: {{ $json.reason }}\n\nClick Approve or Reject below.",
+        "approvalOptions": {
+          "values": {
+            "approvalType": "double"
+          }
+        },
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1248,
+        336
+      ],
+      "id": "27e1a9c8-85a9-4302-822d-bbe90c02f1ea",
+      "name": "Human Approval",
+      "webhookId": "REGENERATE_ON_IMPORT",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOUR_GMAIL_CREDENTIAL_ID",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "Invoice Approval Log",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Invoices",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{ $now.toISO() }}",
+            "vendor": "={{ $('Webhook').first().json.body.vendor }}",
+            "invoice_number": "={{ $('Webhook').first().json.body.invoice_number }}",
+            "amount": "={{ $('Webhook').first().json.body.amount }}",
+            "currency": "={{ $('Webhook').first().json.body.currency }}",
+            "po_number": "={{ $('Webhook').first().json.body.po_number }}",
+            "decision": "needs_human",
+            "outcome": "approved",
+            "reason": "={{ $('Parse Policy').first().json.reason }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vendor",
+              "displayName": "vendor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "invoice_number",
+              "displayName": "invoice_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "amount",
+              "displayName": "amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "currency",
+              "displayName": "currency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "po_number",
+              "displayName": "po_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "decision",
+              "displayName": "decision",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "outcome",
+              "displayName": "outcome",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reason",
+              "displayName": "reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1696,
+        336
+      ],
+      "id": "96e61085-0980-4e78-9c26-ec399ed9daa2",
+      "name": "Log Approved Invoice",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "Invoice Approval Log",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Invoices",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{ $now.toISO() }}",
+            "vendor": "={{ $('Webhook').first().json.body.vendor }}",
+            "invoice_number": "={{ $('Webhook').first().json.body.invoice_number }}",
+            "amount": "={{ $('Webhook').first().json.body.amount }}",
+            "currency": "={{ $('Webhook').first().json.body.currency }}",
+            "po_number": "={{ $('Webhook').first().json.body.po_number }}",
+            "decision": "needs_human",
+            "reason": "Rejected by human approver",
+            "outcome": "rejected"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vendor",
+              "displayName": "vendor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "invoice_number",
+              "displayName": "invoice_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "amount",
+              "displayName": "amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "currency",
+              "displayName": "currency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "po_number",
+              "displayName": "po_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "decision",
+              "displayName": "decision",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "outcome",
+              "displayName": "outcome",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reason",
+              "displayName": "reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1696,
+        528
+      ],
+      "id": "11e78fe8-689c-44ed-9919-0031c5b7e065",
+      "name": "Log Rejected Invoice",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "Invoice Approval Log",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Invoices",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{ $now.toISO() }}",
+            "vendor": "={{ $('Webhook').first().json.body.vendor }}",
+            "invoice_number": "={{ $('Webhook').first().json.body.invoice_number }}",
+            "amount": "={{ $('Webhook').first().json.body.amount }}",
+            "currency": "={{ $('Webhook').first().json.body.currency }}",
+            "po_number": "={{ $('Webhook').first().json.body.po_number }}",
+            "reason": "={{ $('Parse Policy').first().json.reason }}",
+            "outcome": "auto_approved",
+            "decision": "auto_approve"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vendor",
+              "displayName": "vendor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "invoice_number",
+              "displayName": "invoice_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "amount",
+              "displayName": "amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "currency",
+              "displayName": "currency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "po_number",
+              "displayName": "po_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "decision",
+              "displayName": "decision",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "outcome",
+              "displayName": "outcome",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reason",
+              "displayName": "reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1248,
+        96
+      ],
+      "id": "42092ad7-0b83-4f0d-96b5-e1ff945041d5",
+      "name": "Log Auto Approved Invoice",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "OWNER_EMAIL",
+        "subject": "=Auto-approved invoice {{ $('Webhook').first().json.body.invoice_number }} from {{ $('Webhook').first().json.body.vendor }}",
+        "emailType": "text",
+        "message": "=Vendor: {{ $('Webhook').first().json.body.vendor }} \nInvoice: {{ $('Webhook').first().json.body.invoice_number }}\nAmount: {{ $('Webhook').first().json.body.amount }} {{ $('Webhook').first().json.body.currency }} \nPO: {{ $('Webhook').first().json.body.po_number }} \nPolicy note: {{ $('Parse Policy').first().json.reason }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1248,
+        -96
+      ],
+      "id": "3203b1cc-0ce1-4e6e-ad00-4601814b90fc",
+      "name": "Notify Owner Auto Approved",
+      "webhookId": "REGENERATE_ON_IMPORT",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOUR_GMAIL_CREDENTIAL_ID",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Valid Invoice?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Invoice?": {
+      "main": [
+        [
+          {
+            "node": "Policy Agent",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Respond Accepted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Policy Agent": {
+      "main": [
+        [
+          {
+            "node": "Parse Policy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Policy Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Policy Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Policy": {
+      "main": [
+        [
+          {
+            "node": "Auto Approve?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auto Approve?": {
+      "main": [
+        [
+          {
+            "node": "Notify Owner Auto Approved",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Auto Approved Invoice",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Human Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Human Approval": {
+      "main": [
+        [
+          {
+            "node": "Human Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Human Approved?": {
+      "main": [
+        [
+          {
+            "node": "Log Approved Invoice",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Rejected Invoice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Owner Auto Approved": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "REGENERATE_ON_IMPORT",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "REMOVED"
+  },
+  "nodeGroups": [],
+  "id": "WORKFLOW_ID",
+  "tags": []
+}
